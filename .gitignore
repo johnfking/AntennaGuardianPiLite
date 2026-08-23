@@ -1,0 +1,6 @@
+/build/
+/dist/
+*.o
+*.tar.gz
+*.sha256
+__pycache__/

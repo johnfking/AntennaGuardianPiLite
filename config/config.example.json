@@ -1,0 +1,14 @@
+{
+  "radio": {
+    "host": "10.0.0.107",
+    "port": 4992,
+    "reconnect_seconds": 3
+  },
+  "interlock": {
+    "antennas": ["ANT1", "ANT2"]
+  },
+  "policy": {
+    "ANT1": ["160m", "80m", "60m", "40m", "30m", "20m", "17m"],
+    "ANT2": ["20m", "17m", "15m", "12m", "10m", "6m"]
+  }
+}

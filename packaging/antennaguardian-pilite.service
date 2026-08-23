@@ -1,0 +1,26 @@
+[Unit]
+Description=AntennaGuardianPiLite Flex antenna interlock
+Documentation=https://github.com/johnfking/AntennaGuardianPiLite
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=antennaguardian
+Group=antennaguardian
+ExecStart=/usr/local/bin/antennaguardian-pilite --config /etc/antennaguardian-pilite/config.json
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

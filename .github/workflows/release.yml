@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            compiler: gcc
+            strip: strip
+            package: ''
+          - arch: arm64
+            compiler: aarch64-linux-gnu-gcc
+            strip: aarch64-linux-gnu-strip
+            package: gcc-aarch64-linux-gnu
+          - arch: armv7
+            compiler: arm-linux-gnueabihf-gcc
+            strip: arm-linux-gnueabihf-strip
+            package: gcc-arm-linux-gnueabihf
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install cross compiler
+        if: matrix.package != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.package }}
+      - name: Build
+        run: make CC=${{ matrix.compiler }} VERSION=${GITHUB_REF_NAME#v}
+      - name: Package
+        shell: bash
+        run: |
+          name=AntennaGuardianPiLite-linux-${{ matrix.arch }}
+          mkdir -p "dist/$name"
+          cp build/antennaguardian-pilite "dist/$name/"
+          ${{ matrix.strip }} "dist/$name/antennaguardian-pilite"
+          cp config/config.example.json "dist/$name/"
+          cp packaging/antennaguardian-pilite.service packaging/install.sh "dist/$name/"
+          chmod +x "dist/$name/install.sh"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
+          mkdir -p "dist/$name/licenses"
+          cp third_party/cJSON/LICENSE "dist/$name/licenses/cJSON-LICENSE"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Create checksum manifest
+        run: cat dist/*.sha256 | sort -k2 > dist/SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh release create "${{ github.ref_name }}"
+          dist/*.tar.gz dist/SHA256SUMS
+          --verify-tag
+          --generate-notes
+          --title "AntennaGuardianPiLite ${{ github.ref_name }}"

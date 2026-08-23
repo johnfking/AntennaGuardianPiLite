@@ -1,0 +1,5 @@
+{
+  "radio": {"host": "127.0.0.1", "reconect_seconds": 3},
+  "interlock": {"antennas": ["ANT1"]},
+  "policy": {"ANT1": ["20m"]}
+}

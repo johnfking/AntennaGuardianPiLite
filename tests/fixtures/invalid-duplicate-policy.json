@@ -1,0 +1,8 @@
+{
+  "radio": {"host": "127.0.0.1"},
+  "interlock": {"antennas": ["ANT1"]},
+  "policy": {
+    "ANT1": ["20m"],
+    "ant1": ["40m"]
+  }
+}
