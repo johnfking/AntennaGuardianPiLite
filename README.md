@@ -60,10 +60,11 @@ antenna on every band.
 
 ## Install a release
 
-Download the archive for the Pi operating system architecture:
+Download the archive that matches the Linux system architecture:
 
-- `linux-arm64` for 64-bit Raspberry Pi OS.
-- `linux-armv7` for 32-bit Raspberry Pi OS.
+- `linux-arm64` for 64-bit Raspberry Pi OS and ARM Linux.
+- `linux-armv7` for 32-bit Raspberry Pi OS and ARM Linux.
+- `linux-x86_64` for Intel or AMD 64-bit Linux.
 
 Then install without starting the service:
 
@@ -76,6 +77,52 @@ sudo ./install.sh
 The installer creates a restricted service account and configuration file, but
 it deliberately does **not** enable or start protection. Review the printed
 steps and validate the configuration first.
+
+## Service control
+
+Edit the installed policy, then validate it without contacting the radio:
+
+```bash
+sudoedit /etc/antennaguardian-pilite/config.json
+sudo -u antennaguardian /usr/local/bin/antennaguardian-pilite \
+  --config /etc/antennaguardian-pilite/config.json --check-config
+```
+
+Use the standard systemd commands to control protection:
+
+```bash
+# Start protection now.
+sudo systemctl start antennaguardian-pilite
+
+# Show service state and recent log messages.
+sudo systemctl status antennaguardian-pilite
+
+# Follow the live service log.
+sudo journalctl -u antennaguardian-pilite -f
+
+# Reload protection after changing the configuration.
+sudo systemctl restart antennaguardian-pilite
+
+# Stop protection cleanly.
+sudo systemctl stop antennaguardian-pilite
+```
+
+To start protection automatically whenever Linux boots, enable the service.
+The `--now` form also starts it immediately:
+
+```bash
+sudo systemctl enable --now antennaguardian-pilite
+```
+
+To stop protection and remove it from automatic startup:
+
+```bash
+sudo systemctl disable --now antennaguardian-pilite
+```
+
+`systemctl stop` and `systemctl restart` ask PiLite to shut down cleanly. While
+the radio connection remains available, PiLite removes its dynamic interlock
+before exiting.
 
 ## Terminal use
 
@@ -90,8 +137,7 @@ antennaguardian-pilite --config ./config.json --observe
 antennaguardian-pilite --config ./config.json
 ```
 
-Use `--verbose` to include raw Flex command and status traffic. Service logs are
-available through `journalctl -u antennaguardian-pilite`.
+Use `--verbose` to include raw Flex command and status traffic.
 
 ## Build and test
 
