@@ -32,7 +32,7 @@ protection, correct station wiring, or responsible RF operation.
 ## Supported bands
 
 The native Flex HF/6m catalog is built in: `160m`, `80m`, `60m`, `40m`, `30m`,
-`20m`, `17m`, `15m`, `12m`, `10m`, and `6m`. There is no 2-meter entry.
+`20m`, `17m`, `15m`, `12m`, `10m`, and `6m`.
 
 ## Configuration
 
