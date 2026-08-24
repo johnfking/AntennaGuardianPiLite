@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import select
 import signal
 import socket
 import subprocess
@@ -75,18 +76,43 @@ class FakeRadio:
                 stream.write(b"S0|interlock state=TRANSMITTING source=SW\n")
                 stream.write(b"S0|interlock state=UNKEY_REQUESTED source=SW\n")
                 stream.flush()
+                self._reply(stream, ready_sequence)
                 not_ready_sequence, not_ready_command = self._read_command(stream)
                 if not_ready_command != "interlock not_ready 42":
                     raise AssertionError(
-                        f"expected nested not-ready command, received {not_ready_command!r}"
+                        f"expected deferred not-ready command, received {not_ready_command!r}"
                     )
-                # Deliver the outer response while the nested command is waiting.
-                self._reply(stream, ready_sequence)
                 self._reply(stream, not_ready_sequence)
 
                 stream.write(b"S0|transmit freq=7.074000 tx_antenna=ANT2\n")
                 stream.flush()
                 self._expect(stream, "interlock not_ready 42")
+                stream.write(b"S0|interlock state=PTT_REQUESTED source=SW\n")
+                stream.flush()
+                self._expect(stream, "interlock not_ready 42")
+
+                # AetherSDR can publish a burst of transmit updates during a band
+                # change. Delay their command replies to reproduce the radio's
+                # response ordering under that load.
+                burst_size = 20
+                stream.write(
+                    b"S0|transmit freq=7.074000 tx_antenna=ANT2\n" * burst_size
+                )
+                stream.flush()
+                burst_commands = 0
+                while select.select([connection], [], [], 0.25)[0]:
+                    sequence, command = self._read_command(stream)
+                    if command != "interlock not_ready 42":
+                        raise AssertionError(
+                            f"expected burst not-ready command, received {command!r}"
+                        )
+                    self._reply(stream, sequence)
+                    burst_commands += 1
+                if not 1 <= burst_commands <= 2:
+                    raise AssertionError(
+                        f"band change produced {burst_commands} interlock commands"
+                    )
+
                 stream.write(b"S0|interlock state=PTT_REQUESTED source=SW\n")
                 stream.flush()
                 self._expect(stream, "interlock not_ready 42")
@@ -140,6 +166,8 @@ def main() -> int:
             for expected in ("PROTECTED", "ALLOWED ANT1 on 20m", "BLOCKED ANT2 on 40m"):
                 if expected not in stderr:
                     raise AssertionError(f"missing log entry {expected!r}\n{stderr}")
+            if "response cache is full" in stderr:
+                raise AssertionError(f"response cache overflowed during band change\n{stderr}")
         finally:
             if process.poll() is None:
                 process.kill()

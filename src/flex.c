@@ -46,6 +46,9 @@ typedef struct {
     bool has_frequency;
     double frequency_mhz;
     char tx_antenna[AG_MAX_ANTENNA_ID + 1];
+    bool command_in_progress;
+    bool interlock_update_pending;
+    bool pending_interlock_ready;
     ag_saved_response saved_responses[AG_SAVED_RESPONSES];
 } ag_connection;
 
@@ -296,7 +299,7 @@ static int accept_response(
     return 0;
 }
 
-static int send_command(
+static int send_command_once(
     ag_connection *connection,
     const char *command,
     char *response_body,
@@ -358,6 +361,44 @@ static int send_command(
     return -1;
 }
 
+static int send_command(
+    ag_connection *connection,
+    const char *command,
+    char *response_body,
+    size_t response_size,
+    bool cleanup_command)
+{
+    int result;
+
+    if (connection->command_in_progress) {
+        ag_log(AG_LOG_ERROR, "Attempted to send a nested Flex command");
+        return -1;
+    }
+
+    connection->command_in_progress = true;
+    result = send_command_once(connection, command, response_body, response_size, cleanup_command);
+    connection->command_in_progress = false;
+    if (result != 0 || cleanup_command) {
+        return result;
+    }
+
+    while (connection->interlock_update_pending && !*connection->stop_requested) {
+        char deferred_command[128];
+        bool ready = connection->pending_interlock_ready;
+
+        connection->interlock_update_pending = false;
+        snprintf(deferred_command, sizeof(deferred_command), "interlock %s %s",
+                 ready ? "ready" : "not_ready", connection->interlock_id);
+        connection->command_in_progress = true;
+        result = send_command_once(connection, deferred_command, NULL, 0u, false);
+        connection->command_in_progress = false;
+        if (result != 0) {
+            return result;
+        }
+    }
+    return 0;
+}
+
 static bool field_value(
     const char *payload,
     const char *field,
@@ -412,6 +453,11 @@ static int set_interlock(ag_connection *connection, bool ready)
 {
     char command[128];
     if (connection->observe_only || connection->interlock_id[0] == '\0') {
+        return 0;
+    }
+    if (connection->command_in_progress) {
+        connection->interlock_update_pending = true;
+        connection->pending_interlock_ready = ready;
         return 0;
     }
     snprintf(command, sizeof(command), "interlock %s %s", ready ? "ready" : "not_ready",
