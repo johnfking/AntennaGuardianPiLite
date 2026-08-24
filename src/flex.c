@@ -433,19 +433,25 @@ static bool field_value(
     return false;
 }
 
-static void log_decision(const ag_connection *connection, ag_policy_decision decision)
+static void log_decision(
+    const ag_connection *connection,
+    ag_policy_decision decision,
+    bool observe_only)
 {
+    const char *allow_label = observe_only ? "WOULD ALLOW" : "ALLOWED";
+    const char *block_label = observe_only ? "WOULD BLOCK" : "BLOCKED";
+
     if (decision.allowed) {
-        ag_log(AG_LOG_INFO, "ALLOWED %s on %s at %.6f MHz", connection->tx_antenna,
-               decision.band, connection->frequency_mhz);
+        ag_log(AG_LOG_INFO, "%s %s on %s at %.6f MHz", allow_label,
+               connection->tx_antenna, decision.band, connection->frequency_mhz);
     } else if (!connection->has_frequency || connection->tx_antenna[0] == '\0') {
-        ag_log(AG_LOG_WARNING, "BLOCKED transmit context is incomplete");
+        ag_log(AG_LOG_WARNING, "%s transmit context is incomplete", block_label);
     } else if (decision.reason == AG_DECISION_OUTSIDE_KNOWN_BANDS) {
-        ag_log(AG_LOG_WARNING, "BLOCKED %.6f MHz is outside known native bands",
+        ag_log(AG_LOG_WARNING, "%s %.6f MHz is outside known native bands", block_label,
                connection->frequency_mhz);
     } else {
-        ag_log(AG_LOG_WARNING, "BLOCKED %s on %s at %.6f MHz", connection->tx_antenna,
-               decision.band, connection->frequency_mhz);
+        ag_log(AG_LOG_WARNING, "%s %s on %s at %.6f MHz", block_label,
+               connection->tx_antenna, decision.band, connection->frequency_mhz);
     }
 }
 
@@ -504,10 +510,14 @@ static int handle_interlock(ag_connection *connection, const char *payload)
     if (strcmp(state, "PTT_REQUESTED") == 0) {
         decision = ag_policy_evaluate(connection->config, connection->has_frequency,
                                       connection->frequency_mhz, connection->tx_antenna);
-        log_decision(connection, decision);
+        log_decision(connection, decision, connection->observe_only);
         return set_interlock(connection, decision.allowed);
     }
     if (strcmp(state, "UNKEY_REQUESTED") == 0) {
+        if (connection->observe_only) {
+            ag_log(AG_LOG_INFO, "Observed transmit ended");
+            return 0;
+        }
         ag_log(AG_LOG_INFO, "Transmit ended; interlock returned to not-ready");
         return set_interlock(connection, false);
     }
@@ -515,8 +525,19 @@ static int handle_interlock(ag_connection *connection, const char *payload)
         decision = ag_policy_evaluate(connection->config, connection->has_frequency,
                                       connection->frequency_mhz, connection->tx_antenna);
         if (!decision.allowed) {
+            if (connection->observe_only) {
+                ag_log(AG_LOG_WARNING,
+                       "OBSERVED TRANSMITTING outside policy: %s at %.6f MHz",
+                       connection->tx_antenna, connection->frequency_mhz);
+                return 0;
+            }
             ag_log(AG_LOG_ERROR, "FAULT radio reports transmission outside policy");
             return set_interlock(connection, false);
+        }
+        if (connection->observe_only) {
+            ag_log(AG_LOG_INFO, "OBSERVED TRANSMITTING %s on %s at %.6f MHz",
+                   connection->tx_antenna, decision.band, connection->frequency_mhz);
+            return 0;
         }
         ag_log(AG_LOG_INFO, "TRANSMITTING %s on %s at %.6f MHz", connection->tx_antenna,
                decision.band, connection->frequency_mhz);

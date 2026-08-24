@@ -128,6 +128,40 @@ class FakeRadio:
             self.listener.close()
 
 
+class ObserveRadio(FakeRadio):
+    def _run(self) -> None:
+        try:
+            connection, _ = self.listener.accept()
+            connection.settimeout(10)
+            self.connected.set()
+            with connection, connection.makefile("rwb", buffering=0) as stream:
+                self._expect(stream, "name AntennaGuardianPiLite")
+                self._expect(stream, "sub radio all")
+                self._expect(stream, "sub slice all")
+                self._expect(stream, "sub tx all")
+
+                stream.write(b"S0|transmit freq=7.171600 tx_antenna=ANT1\n")
+                stream.write(b"S0|interlock state=PTT_REQUESTED source=SW\n")
+                stream.write(b"S0|interlock state=TRANSMITTING source=SW\n")
+                stream.write(b"S0|interlock state=UNKEY_REQUESTED source=SW\n")
+                stream.flush()
+                if select.select([connection], [], [], 0.25)[0]:
+                    _, command = self._read_command(stream)
+                    raise AssertionError(
+                        f"observe mode unexpectedly sent command {command!r}"
+                    )
+                self.ready_for_stop.set()
+                if stream.readline():
+                    raise AssertionError("observe mode sent a command while stopping")
+            self.complete.set()
+        except BaseException as error:
+            self.error = error
+            self.ready_for_stop.set()
+            self.complete.set()
+        finally:
+            self.listener.close()
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: test_fake_radio.py PATH_TO_BINARY")
@@ -168,6 +202,52 @@ def main() -> int:
                     raise AssertionError(f"missing log entry {expected!r}\n{stderr}")
             if "response cache is full" in stderr:
                 raise AssertionError(f"response cache overflowed during band change\n{stderr}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+    observer = ObserveRadio()
+    observer.start()
+    observe_config = {
+        "radio": {"host": "127.0.0.1", "port": observer.port, "reconnect_seconds": 1},
+        "interlock": {"antennas": ["ANT1", "ANT2"]},
+        "policy": {"ANT1": ["20m"], "ANT2": []},
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        config_path = Path(directory) / "config.json"
+        config_path.write_text(json.dumps(observe_config), encoding="utf-8")
+        process = subprocess.Popen(
+            [sys.argv[1], "--config", str(config_path), "--observe", "--once"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            if not observer.ready_for_stop.wait(10):
+                raise AssertionError("fake radio did not complete observe checks")
+            if observer.error is not None:
+                raise observer.error
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+            if process.returncode != 0:
+                raise AssertionError(
+                    f"observer exited with {process.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            if not observer.complete.wait(2):
+                raise AssertionError("observer did not disconnect cleanly")
+            if observer.error is not None:
+                raise observer.error
+            for expected in (
+                "WOULD BLOCK ANT1 on 40m",
+                "OBSERVED TRANSMITTING outside policy",
+                "Observed transmit ended",
+            ):
+                if expected not in stderr:
+                    raise AssertionError(f"missing observe log entry {expected!r}\n{stderr}")
+            for forbidden in ("FAULT", "interlock returned to not-ready"):
+                if forbidden in stderr:
+                    raise AssertionError(f"misleading observe log entry {forbidden!r}\n{stderr}")
         finally:
             if process.poll() is None:
                 process.kill()
