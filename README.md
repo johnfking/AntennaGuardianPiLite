@@ -24,7 +24,8 @@ AntennaGuardianPiLite is deliberately fail closed while connected:
   `not_ready`.
 - `SIGINT` and `SIGTERM` remove the dynamic interlock before exit when the radio
   connection is still available.
-- Connection loss is visible in the logs and triggers a bounded reconnect loop.
+- Connection loss is visible in the logs. Discovery mode waits for the radio's
+  next UDP announcement before reconnecting.
 
 Software is an additional guard, not a substitute for the radio's hardware
 protection, correct station wiring, or responsible RF operation.
@@ -39,11 +40,7 @@ The native Flex HF/6m catalog is built in: `160m`, `80m`, `60m`, `40m`, `30m`,
 ```json
 {
   "radio": {
-    "host": "10.0.0.107",
-    "port": 4992,
-    "reconnect_seconds": 3,
-    "reconnect_max_seconds": 30,
-    "reconnect_log_seconds": 300
+    "serial": "1234-5678-6600-ABCD"
   },
   "interlock": {
     "antennas": ["ANT1", "ANT2"]
@@ -55,12 +52,46 @@ The native Flex HF/6m catalog is built in: `160m`, `80m`, `60m`, `40m`, `30m`,
 }
 ```
 
+Serial-pinned discovery is the recommended radio selector. PiLite listens for
+the Flex VITA-49 discovery announcement on UDP port `4992` and connects to the
+IP address and TCP port advertised by that radio. There is no timed polling
+loop: when the radio is off or the network is unavailable, PiLite simply waits
+for a matching announcement.
+
+Three discovery selector forms are supported:
+
+```json
+{ "radio": { "serial": "1234-5678-6600-ABCD" } }
+{ "radio": { "discovery_ip": "192.168.1.200" } }
+{ "radio": { "serial": "1234-5678-6600-ABCD", "discovery_ip": "192.168.1.200" } }
+```
+
+With both values configured, **both must match the same announcement**. Serial
+pinning survives DHCP address changes. IP pinning is useful on a network with a
+reserved radio address, and dual pinning is the strictest option. Nonmatching
+and malformed discovery packets are ignored.
+
+Fixed-host mode remains available for networks where UDP discovery cannot
+reach the Pi:
+
+```json
+{
+  "radio": {
+    "host": "192.168.1.200",
+    "port": 4992,
+    "reconnect_seconds": 3,
+    "reconnect_max_seconds": 30,
+    "reconnect_log_seconds": 300
+  }
+}
+```
+
 Configuration is intentionally strict. Unknown keys, unknown bands, duplicate
 entries, missing policy rows, and malformed antenna IDs are rejected before a
 network connection is opened. An empty band array is valid and blocks that
 antenna on every band.
 
-When the radio is unavailable, retry delays grow exponentially from
+In fixed-host mode, retry delays grow exponentially from
 `reconnect_seconds` to `reconnect_max_seconds`. With the example values, PiLite
 retries after 3, 6, 12, 24, and then 30 seconds. A successful connection resets
 the next retry to the initial delay. Repeated unavailable-radio messages are
@@ -70,6 +101,10 @@ connection attempts continue in the background.
 Existing configurations that only specify `reconnect_seconds` remain valid.
 For responsive recovery and a quiet journal, configure all three values rather
 than increasing the initial retry delay.
+
+The fixed-host `port` and reconnect settings cannot be combined with discovery
+selectors. This is intentional: discovery gets the current connection endpoint
+from the radio and waits for announcements instead of running the retry timer.
 
 ## Install a release
 
@@ -162,7 +197,8 @@ make
 make test
 ```
 
-The test suite uses only a loopback fake Flex server. It verifies immediate
+The test suite uses only a loopback fake Flex server and synthetic discovery
+packets. It verifies selector pinning, VITA-49 packet rejection, immediate
 `not_ready`, allowed and blocked PTT decisions, unkey behavior, interleaved
 command responses, and clean interlock removal without contacting a radio.
 

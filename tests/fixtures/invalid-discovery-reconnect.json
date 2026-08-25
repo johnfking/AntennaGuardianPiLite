@@ -1,0 +1,12 @@
+{
+  "radio": {
+    "serial": "1234-5678-6600-ABCD",
+    "reconnect_seconds": 3
+  },
+  "interlock": {
+    "antennas": ["ANT1"]
+  },
+  "policy": {
+    "ANT1": ["20m"]
+  }
+}

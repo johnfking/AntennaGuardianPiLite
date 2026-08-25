@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "ag_config.h"
+#include "ag_discovery.h"
 #include "ag_flex.h"
 #include "ag_log.h"
 #include "ag_policy.h"
@@ -47,11 +48,22 @@ static void print_config_summary(const ag_config *config)
 {
     size_t antenna_index;
     fprintf(stdout, "Configuration valid\n");
-    fprintf(stdout, "Radio: %s:%u\n", config->host, config->port);
-    fprintf(stdout, "Reconnect: %u seconds initial, %u seconds maximum\n",
-            config->reconnect_seconds, config->reconnect_max_seconds);
-    fprintf(stdout, "Unavailable log interval: %u seconds\n",
-            config->reconnect_log_seconds);
+    if (config->radio_mode == AG_RADIO_DISCOVERY) {
+        fprintf(stdout, "Radio: Flex UDP discovery");
+        if (config->radio_serial[0] != '\0') {
+            fprintf(stdout, " serial=%s", config->radio_serial);
+        }
+        if (config->discovery_ip[0] != '\0') {
+            fprintf(stdout, " ip=%s", config->discovery_ip);
+        }
+        fprintf(stdout, "\n");
+    } else {
+        fprintf(stdout, "Radio: %s:%u\n", config->host, config->port);
+        fprintf(stdout, "Reconnect: %u seconds initial, %u seconds maximum\n",
+                config->reconnect_seconds, config->reconnect_max_seconds);
+        fprintf(stdout, "Unavailable log interval: %u seconds\n",
+                config->reconnect_log_seconds);
+    }
     for (antenna_index = 0; antenna_index < config->antenna_count; ++antenna_index) {
         const ag_antenna_policy *antenna = &config->antennas[antenna_index];
         size_t band_index;
@@ -145,6 +157,52 @@ int main(int argc, char **argv)
 
     ag_log(AG_LOG_INFO, "AntennaGuardianPiLite %s starting in %s mode", AG_VERSION,
            observe_only ? "OBSERVE" : "PROTECT");
+    if (config.radio_mode == AG_RADIO_DISCOVERY) {
+        bool log_connection = true;
+        ag_log(AG_LOG_INFO, "Waiting for a matching Flex radio discovery announcement");
+        while (!stop_requested) {
+            ag_discovered_radio discovered;
+            ag_config session_config;
+            ag_discovery_result discovery_result = ag_discovery_wait(
+                &config, &stop_requested, &discovered);
+            ag_session_result session_result;
+
+            if (discovery_result == AG_DISCOVERY_STOPPED || stop_requested) {
+                break;
+            }
+            if (discovery_result == AG_DISCOVERY_ERROR) {
+                return 1;
+            }
+
+            session_config = config;
+            snprintf(session_config.host, sizeof(session_config.host), "%s", discovered.host);
+            session_config.port = discovered.port;
+            if (log_connection) {
+                ag_log(AG_LOG_INFO, "Discovered %s%s%s serial %s at %s:%u",
+                       discovered.model[0] == '\0' ? "Flex radio" : discovered.model,
+                       discovered.name[0] == '\0' ? "" : " ",
+                       discovered.name, discovered.serial, discovered.host, discovered.port);
+            }
+            session_result = ag_flex_run_session(
+                &session_config, observe_only, &stop_requested, log_connection);
+            if (stop_requested || session_result == AG_SESSION_STOPPED) {
+                break;
+            }
+            if (once) {
+                return 1;
+            }
+            if (session_result == AG_SESSION_UNAVAILABLE) {
+                log_connection = false;
+                continue;
+            }
+            log_connection = true;
+            ag_log(AG_LOG_WARNING,
+                   "Radio session ended; waiting for its next discovery announcement");
+        }
+        ag_log(AG_LOG_INFO, "AntennaGuardianPiLite stopped");
+        return 0;
+    }
+
     while (!stop_requested) {
         ag_session_result result = ag_flex_run_session(
             &config, observe_only, &stop_requested, log_connection_attempt);

@@ -3,6 +3,7 @@ import json
 import select
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -182,9 +183,100 @@ class DelayedObserveRadio(ObserveRadio):
         super()._run()
 
 
+def discovery_packet(
+    serial: str,
+    ip: str,
+    port: int,
+    packet_class: int = 0x534CFFFF,
+) -> bytes:
+    payload = (
+        f"model=FLEX-6600 serial={serial} version=3.8.23 "
+        f"nickname=TestRadio callsign=N0CALL ip={ip} port={port}"
+    ).encode("ascii")
+    payload += b"\0" * (-len(payload) % 4)
+    packet_words = (28 + len(payload)) // 4
+    header = 0x38500000 | packet_words
+    return struct.pack(">7I", header, 0x00000800, 0, packet_class, 0, 0, 0) + payload
+
+
+def send_discovery(packet: bytes) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+        sender.sendto(packet, ("127.0.0.1", 4992))
+
+
+def test_discovery(binary: str) -> None:
+    observer = ObserveRadio()
+    observer.start()
+    config = {
+        "radio": {
+            "serial": "1234-5678-6600-ABCD",
+            "discovery_ip": "127.0.0.1",
+        },
+        "interlock": {"antennas": ["ANT1", "ANT2"]},
+        "policy": {"ANT1": ["20m"], "ANT2": []},
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        config_path = Path(directory) / "config.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        process = subprocess.Popen(
+            [binary, "--config", str(config_path), "--observe", "--once"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            time.sleep(0.2)
+            rejected = (
+                b"not a VITA packet",
+                discovery_packet(
+                    "1234-5678-6600-ABCD", "127.0.0.1", observer.port, 0x12345678
+                ),
+                discovery_packet("WRONG-SERIAL", "127.0.0.1", observer.port),
+                discovery_packet(
+                    "1234-5678-6600-ABCD", "127.0.0.2", observer.port
+                ),
+            )
+            for packet in rejected:
+                send_discovery(packet)
+                time.sleep(0.1)
+            if observer.connected.is_set():
+                raise AssertionError("a non-matching discovery packet opened a TCP session")
+
+            matching = discovery_packet(
+                "1234-5678-6600-ABCD", "127.0.0.1", observer.port
+            )
+            for _ in range(10):
+                send_discovery(matching)
+                if observer.ready_for_stop.wait(0.2):
+                    break
+            if not observer.ready_for_stop.is_set():
+                raise AssertionError("matching discovery packet did not open a TCP session")
+            if observer.error is not None:
+                raise observer.error
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+            if process.returncode != 0:
+                raise AssertionError(
+                    f"discovery observer exited with {process.returncode}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            if "Discovered FLEX-6600 TestRadio serial 1234-5678-6600-ABCD" not in stderr:
+                raise AssertionError(f"matching discovery was not logged\n{stderr}")
+            if not observer.complete.wait(2):
+                raise AssertionError("discovery observer did not disconnect cleanly")
+            if observer.error is not None:
+                raise observer.error
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: test_fake_radio.py PATH_TO_BINARY")
+
+    test_discovery(sys.argv[1])
 
     fake = FakeRadio()
     fake.start()

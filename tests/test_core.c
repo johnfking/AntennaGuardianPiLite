@@ -13,7 +13,9 @@ static void test_valid_config(void)
     const ag_antenna_policy *ant1;
 
     assert(ag_config_load("config/config.example.json", &config, error, sizeof(error)) == 0);
-    assert(strcmp(config.host, "10.0.0.107") == 0);
+    assert(config.radio_mode == AG_RADIO_DISCOVERY);
+    assert(strcmp(config.radio_serial, "YOUR-FLEX-SERIAL") == 0);
+    assert(config.host[0] == '\0');
     assert(config.port == 4992u);
     assert(config.reconnect_seconds == 3u);
     assert(config.reconnect_max_seconds == 30u);
@@ -44,6 +46,34 @@ static void test_legacy_reconnect_config(void)
     assert(config.reconnect_seconds == 300u);
     assert(config.reconnect_max_seconds == 300u);
     assert(config.reconnect_log_seconds == 300u);
+}
+
+static void test_discovery_configs(void)
+{
+    ag_config config;
+    char error[AG_ERROR_SIZE];
+
+    assert(ag_config_load("tests/fixtures/valid-discovery-serial.json", &config, error,
+                          sizeof(error)) == 0);
+    assert(config.radio_mode == AG_RADIO_DISCOVERY);
+    assert(strcmp(config.radio_serial, "1234-5678-6600-ABCD") == 0);
+    assert(config.discovery_ip[0] == '\0');
+    assert(ag_config_load("tests/fixtures/valid-discovery-ip.json", &config, error,
+                          sizeof(error)) == 0);
+    assert(config.radio_mode == AG_RADIO_DISCOVERY);
+    assert(strcmp(config.discovery_ip, "192.0.2.20") == 0);
+    assert(ag_config_load("tests/fixtures/valid-discovery-dual.json", &config, error,
+                          sizeof(error)) == 0);
+    assert(strcmp(config.radio_serial, "1234-5678-6600-ABCD") == 0);
+    assert(strcmp(config.discovery_ip, "192.0.2.20") == 0);
+    assert(ag_config_load("tests/fixtures/invalid-mixed-radio-selector.json", &config, error,
+                          sizeof(error)) != 0);
+    assert(ag_config_load("tests/fixtures/invalid-discovery-ip.json", &config, error,
+                          sizeof(error)) != 0);
+    assert(ag_config_load("tests/fixtures/invalid-discovery-reconnect.json", &config, error,
+                          sizeof(error)) != 0);
+    assert(ag_config_load("tests/fixtures/invalid-radio-selector-missing.json", &config, error,
+                          sizeof(error)) != 0);
 }
 
 static void test_policy(void)
@@ -102,6 +132,7 @@ int main(void)
     test_policy();
     test_retry_backoff();
     test_legacy_reconnect_config();
+    test_discovery_configs();
     test_invalid_configs();
     puts("core tests passed");
     return 0;

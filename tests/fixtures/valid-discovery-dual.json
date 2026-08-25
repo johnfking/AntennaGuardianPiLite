@@ -1,0 +1,12 @@
+{
+  "radio": {
+    "serial": "1234-5678-6600-ABCD",
+    "discovery_ip": "192.0.2.20"
+  },
+  "interlock": {
+    "antennas": ["ANT1"]
+  },
+  "policy": {
+    "ANT1": ["20m"]
+  }
+}

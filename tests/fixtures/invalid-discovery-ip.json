@@ -1,0 +1,11 @@
+{
+  "radio": {
+    "discovery_ip": "999.1.2.3"
+  },
+  "interlock": {
+    "antennas": ["ANT1"]
+  },
+  "policy": {
+    "ANT1": ["20m"]
+  }
+}

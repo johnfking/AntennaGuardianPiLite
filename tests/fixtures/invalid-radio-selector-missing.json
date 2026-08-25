@@ -1,0 +1,9 @@
+{
+  "radio": {},
+  "interlock": {
+    "antennas": ["ANT1"]
+  },
+  "policy": {
+    "ANT1": ["20m"]
+  }
+}

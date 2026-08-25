@@ -3,6 +3,7 @@
 #include "ag_policy.h"
 #include "cJSON.h"
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -109,6 +110,22 @@ static bool valid_antenna_id(const char *id)
     return true;
 }
 
+static bool valid_radio_serial(const char *serial)
+{
+    size_t index;
+    size_t length = strlen(serial);
+    if (length == 0u || length > AG_MAX_RADIO_SERIAL) {
+        return false;
+    }
+    for (index = 0; index < length; ++index) {
+        unsigned char character = (unsigned char)serial[index];
+        if (!isalnum(character) && character != '-' && character != '_' && character != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+
 const ag_antenna_policy *ag_config_find_antenna(const ag_config *config, const char *id)
 {
     size_t index;
@@ -127,10 +144,12 @@ static int parse_radio(
     size_t error_size)
 {
     static const char *const allowed[] = {
-        "host", "port", "reconnect_seconds", "reconnect_max_seconds",
+        "host", "serial", "discovery_ip", "port", "reconnect_seconds", "reconnect_max_seconds",
         "reconnect_log_seconds"};
     const cJSON *radio = cJSON_GetObjectItemCaseSensitive(root, "radio");
     const cJSON *host;
+    const cJSON *serial;
+    const cJSON *discovery_ip;
     const cJSON *port;
     const cJSON *reconnect;
     const cJSON *reconnect_max;
@@ -139,17 +158,50 @@ static int parse_radio(
     if (!cJSON_IsObject(radio)) {
         return fail(error, error_size, "radio must be an object");
     }
-    if (reject_unknown_keys(radio, "radio", allowed, 5u, error, error_size) != 0) {
+    if (reject_unknown_keys(radio, "radio", allowed, 7u, error, error_size) != 0) {
         return -1;
     }
 
     host = cJSON_GetObjectItemCaseSensitive(radio, "host");
-    if (!cJSON_IsString(host) || host->valuestring[0] == '\0'
-        || strlen(host->valuestring) > AG_MAX_HOST) {
+    serial = cJSON_GetObjectItemCaseSensitive(radio, "serial");
+    discovery_ip = cJSON_GetObjectItemCaseSensitive(radio, "discovery_ip");
+    if (host == NULL && serial == NULL && discovery_ip == NULL) {
+        return fail(error, error_size,
+                    "radio must specify host, serial, discovery_ip, or both discovery selectors");
+    }
+    if (host != NULL && (serial != NULL || discovery_ip != NULL)) {
+        return fail(error, error_size,
+                    "radio.host cannot be combined with serial or discovery_ip");
+    }
+    if (host != NULL && (!cJSON_IsString(host) || host->valuestring[0] == '\0'
+        || strlen(host->valuestring) > AG_MAX_HOST)) {
         return fail(error, error_size, "radio.host must be a non-empty string of at most %d characters",
                     AG_MAX_HOST);
     }
-    strcpy(config->host, host->valuestring);
+    if (serial != NULL && (!cJSON_IsString(serial) || !valid_radio_serial(serial->valuestring))) {
+        return fail(error, error_size,
+                    "radio.serial must use 1-%d letters, digits, '-', '_' or '.'",
+                    AG_MAX_RADIO_SERIAL);
+    }
+    if (discovery_ip != NULL) {
+        struct in_addr address;
+        if (!cJSON_IsString(discovery_ip)
+            || strlen(discovery_ip->valuestring) > AG_MAX_IPV4_TEXT
+            || inet_pton(AF_INET, discovery_ip->valuestring, &address) != 1) {
+            return fail(error, error_size, "radio.discovery_ip must be a valid IPv4 address");
+        }
+    }
+
+    config->radio_mode = host == NULL ? AG_RADIO_DISCOVERY : AG_RADIO_DIRECT;
+    if (host != NULL) {
+        strcpy(config->host, host->valuestring);
+    }
+    if (serial != NULL) {
+        strcpy(config->radio_serial, serial->valuestring);
+    }
+    if (discovery_ip != NULL) {
+        strcpy(config->discovery_ip, discovery_ip->valuestring);
+    }
 
     port = cJSON_GetObjectItemCaseSensitive(radio, "port");
     if (port != NULL && (!cJSON_IsNumber(port) || port->valuedouble < 1
@@ -183,6 +235,11 @@ static int parse_radio(
     }
 
     reconnect_log = cJSON_GetObjectItemCaseSensitive(radio, "reconnect_log_seconds");
+    if (config->radio_mode == AG_RADIO_DISCOVERY
+        && (port != NULL || reconnect != NULL || reconnect_max != NULL || reconnect_log != NULL)) {
+        return fail(error, error_size,
+                    "radio.port and reconnect settings are only valid with radio.host");
+    }
     if (reconnect_log != NULL
         && (!cJSON_IsNumber(reconnect_log) || reconnect_log->valuedouble < 1
             || reconnect_log->valuedouble > 86400
