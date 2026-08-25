@@ -8,13 +8,15 @@
 
 typedef enum {
     AG_SESSION_STOPPED = 0,
-    AG_SESSION_DISCONNECTED = 1,
-    AG_SESSION_ERROR = 2
+    AG_SESSION_UNAVAILABLE = 1,
+    AG_SESSION_DISCONNECTED = 2,
+    AG_SESSION_ERROR = 3
 } ag_session_result;
 
 ag_session_result ag_flex_run_session(
     const ag_config *config,
     bool observe_only,
-    volatile sig_atomic_t *stop_requested);
+    volatile sig_atomic_t *stop_requested,
+    bool log_connection_attempt);
 
 #endif

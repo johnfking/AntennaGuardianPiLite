@@ -2,7 +2,9 @@
   "radio": {
     "host": "10.0.0.107",
     "port": 4992,
-    "reconnect_seconds": 3
+    "reconnect_seconds": 3,
+    "reconnect_max_seconds": 30,
+    "reconnect_log_seconds": 300
   },
   "interlock": {
     "antennas": ["ANT1", "ANT2"]

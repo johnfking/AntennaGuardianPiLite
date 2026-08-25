@@ -1,5 +1,5 @@
 CC ?= cc
-VERSION ?= 0.1.2
+VERSION ?= 0.1.3
 PREFIX ?= /usr/local
 SYSCONFDIR ?= /etc
 BUILD_DIR ?= build
@@ -9,8 +9,8 @@ CFLAGS ?= -O2
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 LDLIBS += -lm
 
-APP_SOURCES = src/main.c src/config.c src/policy.c src/log.c src/flex.c third_party/cJSON/cJSON.c
-TEST_SOURCES = tests/test_core.c src/config.c src/policy.c third_party/cJSON/cJSON.c
+APP_SOURCES = src/main.c src/config.c src/policy.c src/retry.c src/log.c src/flex.c third_party/cJSON/cJSON.c
+TEST_SOURCES = tests/test_core.c src/config.c src/policy.c src/retry.c third_party/cJSON/cJSON.c
 APP = $(BUILD_DIR)/antennaguardian-pilite
 CORE_TEST = $(BUILD_DIR)/test-core
 

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 
@@ -162,6 +163,25 @@ class ObserveRadio(FakeRadio):
             self.listener.close()
 
 
+class DelayedObserveRadio(ObserveRadio):
+    def __init__(self, delay_seconds: float) -> None:
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.settimeout(10)
+        self.port = self.listener.getsockname()[1]
+        self.delay_seconds = delay_seconds
+        self.connected = threading.Event()
+        self.ready_for_stop = threading.Event()
+        self.complete = threading.Event()
+        self.error: BaseException | None = None
+
+    def _run(self) -> None:
+        time.sleep(self.delay_seconds)
+        self.listener.listen(1)
+        super()._run()
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: test_fake_radio.py PATH_TO_BINARY")
@@ -202,6 +222,55 @@ def main() -> int:
                     raise AssertionError(f"missing log entry {expected!r}\n{stderr}")
             if "response cache is full" in stderr:
                 raise AssertionError(f"response cache overflowed during band change\n{stderr}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+    delayed = DelayedObserveRadio(1.5)
+    delayed.start()
+    delayed_config = {
+        "radio": {
+            "host": "127.0.0.1",
+            "port": delayed.port,
+            "reconnect_seconds": 1,
+            "reconnect_max_seconds": 2,
+            "reconnect_log_seconds": 300,
+        },
+        "interlock": {"antennas": ["ANT1", "ANT2"]},
+        "policy": {"ANT1": ["20m"], "ANT2": []},
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        config_path = Path(directory) / "config.json"
+        config_path.write_text(json.dumps(delayed_config), encoding="utf-8")
+        started = time.monotonic()
+        process = subprocess.Popen(
+            [sys.argv[1], "--config", str(config_path), "--observe"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            if not delayed.ready_for_stop.wait(5):
+                raise AssertionError("client did not reconnect when the fake radio became available")
+            elapsed = time.monotonic() - started
+            if elapsed > 4.5:
+                raise AssertionError(f"reconnection took too long: {elapsed:.2f} seconds")
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+            if process.returncode != 0:
+                raise AssertionError(
+                    f"delayed observer exited with {process.returncode}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            if stderr.count("Radio unavailable; retrying") != 1:
+                raise AssertionError(f"unavailable logs were not suppressed\n{stderr}")
+            if "Connected to 127.0.0.1" not in stderr:
+                raise AssertionError(f"successful reconnect was not logged\n{stderr}")
+            if not delayed.complete.wait(2):
+                raise AssertionError("delayed observer did not disconnect cleanly")
+            if delayed.error is not None:
+                raise delayed.error
         finally:
             if process.poll() is None:
                 process.kill()

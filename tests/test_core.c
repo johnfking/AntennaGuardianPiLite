@@ -1,5 +1,6 @@
 #include "ag_config.h"
 #include "ag_policy.h"
+#include "ag_retry.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -14,11 +15,35 @@ static void test_valid_config(void)
     assert(ag_config_load("config/config.example.json", &config, error, sizeof(error)) == 0);
     assert(strcmp(config.host, "10.0.0.107") == 0);
     assert(config.port == 4992u);
+    assert(config.reconnect_seconds == 3u);
+    assert(config.reconnect_max_seconds == 30u);
+    assert(config.reconnect_log_seconds == 300u);
     assert(config.antenna_count == 2u);
     ant1 = ag_config_find_antenna(&config, "ant1");
     assert(ant1 != NULL);
     assert((ant1->allowed_bands & (1u << ag_band_index("160m"))) != 0u);
     assert((ant1->allowed_bands & (1u << ag_band_index("6m"))) == 0u);
+}
+
+static void test_retry_backoff(void)
+{
+    assert(ag_retry_next_delay(3u, 30u) == 6u);
+    assert(ag_retry_next_delay(6u, 30u) == 12u);
+    assert(ag_retry_next_delay(12u, 30u) == 24u);
+    assert(ag_retry_next_delay(24u, 30u) == 30u);
+    assert(ag_retry_next_delay(30u, 30u) == 30u);
+}
+
+static void test_legacy_reconnect_config(void)
+{
+    ag_config config;
+    char error[AG_ERROR_SIZE];
+
+    assert(ag_config_load("tests/fixtures/valid-legacy-reconnect.json", &config, error,
+                          sizeof(error)) == 0);
+    assert(config.reconnect_seconds == 300u);
+    assert(config.reconnect_max_seconds == 300u);
+    assert(config.reconnect_log_seconds == 300u);
 }
 
 static void test_policy(void)
@@ -65,12 +90,18 @@ static void test_invalid_configs(void)
     assert(ag_config_load("tests/fixtures/invalid-duplicate-policy.json", &config, error,
                           sizeof(error)) != 0);
     assert(strstr(error, "duplicate antenna") != NULL);
+
+    assert(ag_config_load("tests/fixtures/invalid-reconnect-range.json", &config, error,
+                          sizeof(error)) != 0);
+    assert(strstr(error, "must be at least reconnect_seconds") != NULL);
 }
 
 int main(void)
 {
     test_valid_config();
     test_policy();
+    test_retry_backoff();
+    test_legacy_reconnect_config();
     test_invalid_configs();
     puts("core tests passed");
     return 0;

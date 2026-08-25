@@ -19,6 +19,8 @@ typedef struct {
     char host[AG_MAX_HOST + 1];
     uint16_t port;
     unsigned reconnect_seconds;
+    unsigned reconnect_max_seconds;
+    unsigned reconnect_log_seconds;
     size_t antenna_count;
     ag_antenna_policy antennas[AG_MAX_ANTENNAS];
 } ag_config;

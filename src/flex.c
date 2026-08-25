@@ -633,7 +633,8 @@ static void remove_interlock(ag_connection *connection)
 ag_session_result ag_flex_run_session(
     const ag_config *config,
     bool observe_only,
-    volatile sig_atomic_t *stop_requested)
+    volatile sig_atomic_t *stop_requested,
+    bool log_connection_attempt)
 {
     ag_connection connection;
     ag_session_result result = AG_SESSION_DISCONNECTED;
@@ -644,13 +645,15 @@ ag_session_result ag_flex_run_session(
     connection.socket_fd = -1;
     connection.observe_only = observe_only;
 
-    ag_log(AG_LOG_INFO, "Connecting to %s:%u", config->host, config->port);
+    if (log_connection_attempt) {
+        ag_log(AG_LOG_INFO, "Connecting to %s:%u", config->host, config->port);
+    }
     connection.socket_fd = connect_socket(config, stop_requested);
     if (connection.socket_fd < 0) {
-        if (!*stop_requested) {
+        if (!*stop_requested && log_connection_attempt) {
             ag_log(AG_LOG_ERROR, "Could not connect to %s:%u", config->host, config->port);
         }
-        return *stop_requested ? AG_SESSION_STOPPED : AG_SESSION_DISCONNECTED;
+        return *stop_requested ? AG_SESSION_STOPPED : AG_SESSION_UNAVAILABLE;
     }
     ag_log(AG_LOG_INFO, "Connected to %s:%u", config->host, config->port);
 

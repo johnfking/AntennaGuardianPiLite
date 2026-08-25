@@ -41,7 +41,9 @@ The native Flex HF/6m catalog is built in: `160m`, `80m`, `60m`, `40m`, `30m`,
   "radio": {
     "host": "10.0.0.107",
     "port": 4992,
-    "reconnect_seconds": 3
+    "reconnect_seconds": 3,
+    "reconnect_max_seconds": 30,
+    "reconnect_log_seconds": 300
   },
   "interlock": {
     "antennas": ["ANT1", "ANT2"]
@@ -57,6 +59,17 @@ Configuration is intentionally strict. Unknown keys, unknown bands, duplicate
 entries, missing policy rows, and malformed antenna IDs are rejected before a
 network connection is opened. An empty band array is valid and blocks that
 antenna on every band.
+
+When the radio is unavailable, retry delays grow exponentially from
+`reconnect_seconds` to `reconnect_max_seconds`. With the example values, PiLite
+retries after 3, 6, 12, 24, and then 30 seconds. A successful connection resets
+the next retry to the initial delay. Repeated unavailable-radio messages are
+suppressed and emitted no more often than `reconnect_log_seconds`, while quiet
+connection attempts continue in the background.
+
+Existing configurations that only specify `reconnect_seconds` remain valid.
+For responsive recovery and a quiet journal, configure all three values rather
+than increasing the initial retry delay.
 
 ## Install a release
 

@@ -126,16 +126,20 @@ static int parse_radio(
     char *error,
     size_t error_size)
 {
-    static const char *const allowed[] = {"host", "port", "reconnect_seconds"};
+    static const char *const allowed[] = {
+        "host", "port", "reconnect_seconds", "reconnect_max_seconds",
+        "reconnect_log_seconds"};
     const cJSON *radio = cJSON_GetObjectItemCaseSensitive(root, "radio");
     const cJSON *host;
     const cJSON *port;
     const cJSON *reconnect;
+    const cJSON *reconnect_max;
+    const cJSON *reconnect_log;
 
     if (!cJSON_IsObject(radio)) {
         return fail(error, error_size, "radio must be an object");
     }
-    if (reject_unknown_keys(radio, "radio", allowed, 3u, error, error_size) != 0) {
+    if (reject_unknown_keys(radio, "radio", allowed, 5u, error, error_size) != 0) {
         return -1;
     }
 
@@ -161,6 +165,34 @@ static int parse_radio(
         return fail(error, error_size, "radio.reconnect_seconds must be an integer from 1 through 300");
     }
     config->reconnect_seconds = reconnect == NULL ? 3u : (unsigned)reconnect->valueint;
+
+    reconnect_max = cJSON_GetObjectItemCaseSensitive(radio, "reconnect_max_seconds");
+    if (reconnect_max != NULL
+        && (!cJSON_IsNumber(reconnect_max) || reconnect_max->valuedouble < 1
+            || reconnect_max->valuedouble > 3600
+            || reconnect_max->valuedouble != reconnect_max->valueint)) {
+        return fail(error, error_size,
+                    "radio.reconnect_max_seconds must be an integer from 1 through 3600");
+    }
+    config->reconnect_max_seconds = reconnect_max == NULL
+        ? (config->reconnect_seconds > 30u ? config->reconnect_seconds : 30u)
+        : (unsigned)reconnect_max->valueint;
+    if (config->reconnect_max_seconds < config->reconnect_seconds) {
+        return fail(error, error_size,
+                    "radio.reconnect_max_seconds must be at least reconnect_seconds");
+    }
+
+    reconnect_log = cJSON_GetObjectItemCaseSensitive(radio, "reconnect_log_seconds");
+    if (reconnect_log != NULL
+        && (!cJSON_IsNumber(reconnect_log) || reconnect_log->valuedouble < 1
+            || reconnect_log->valuedouble > 86400
+            || reconnect_log->valuedouble != reconnect_log->valueint)) {
+        return fail(error, error_size,
+                    "radio.reconnect_log_seconds must be an integer from 1 through 86400");
+    }
+    config->reconnect_log_seconds = reconnect_log == NULL
+        ? 300u
+        : (unsigned)reconnect_log->valueint;
     return 0;
 }
 

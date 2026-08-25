@@ -4,6 +4,7 @@
 #include "ag_flex.h"
 #include "ag_log.h"
 #include "ag_policy.h"
+#include "ag_retry.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -47,7 +48,10 @@ static void print_config_summary(const ag_config *config)
     size_t antenna_index;
     fprintf(stdout, "Configuration valid\n");
     fprintf(stdout, "Radio: %s:%u\n", config->host, config->port);
-    fprintf(stdout, "Reconnect: %u seconds\n", config->reconnect_seconds);
+    fprintf(stdout, "Reconnect: %u seconds initial, %u seconds maximum\n",
+            config->reconnect_seconds, config->reconnect_max_seconds);
+    fprintf(stdout, "Unavailable log interval: %u seconds\n",
+            config->reconnect_log_seconds);
     for (antenna_index = 0; antenna_index < config->antenna_count; ++antenna_index) {
         const ag_antenna_policy *antenna = &config->antennas[antenna_index];
         size_t band_index;
@@ -75,6 +79,13 @@ static void sleep_interruptibly(unsigned seconds)
     }
 }
 
+static long long monotonic_milliseconds(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long long)now.tv_sec * 1000LL + now.tv_nsec / 1000000LL;
+}
+
 int main(int argc, char **argv)
 {
     const char *config_path = DEFAULT_CONFIG;
@@ -85,6 +96,9 @@ int main(int argc, char **argv)
     ag_config config;
     char error[AG_ERROR_SIZE];
     struct sigaction signal_action;
+    unsigned retry_delay;
+    long long next_unavailable_log = 0;
+    bool log_connection_attempt = true;
     int index;
 
     for (index = 1; index < argc; ++index) {
@@ -122,6 +136,7 @@ int main(int argc, char **argv)
     }
 
     ag_log_set_verbose(verbose);
+    retry_delay = config.reconnect_seconds;
     memset(&signal_action, 0, sizeof(signal_action));
     signal_action.sa_handler = handle_signal;
     sigemptyset(&signal_action.sa_mask);
@@ -131,13 +146,32 @@ int main(int argc, char **argv)
     ag_log(AG_LOG_INFO, "AntennaGuardianPiLite %s starting in %s mode", AG_VERSION,
            observe_only ? "OBSERVE" : "PROTECT");
     while (!stop_requested) {
-        ag_session_result result = ag_flex_run_session(&config, observe_only, &stop_requested);
+        ag_session_result result = ag_flex_run_session(
+            &config, observe_only, &stop_requested, log_connection_attempt);
         if (stop_requested || result == AG_SESSION_STOPPED) {
             break;
         }
         if (once) {
             return 1;
         }
+        if (result == AG_SESSION_UNAVAILABLE) {
+            if (log_connection_attempt) {
+                ag_log(AG_LOG_WARNING,
+                       "Radio unavailable; retrying in %u seconds "
+                       "(repeated failures logged every %u seconds)",
+                       retry_delay, config.reconnect_log_seconds);
+                next_unavailable_log = monotonic_milliseconds()
+                    + (long long)config.reconnect_log_seconds * 1000LL;
+            }
+            sleep_interruptibly(retry_delay);
+            retry_delay = ag_retry_next_delay(
+                retry_delay, config.reconnect_max_seconds);
+            log_connection_attempt = monotonic_milliseconds() >= next_unavailable_log;
+            continue;
+        }
+
+        retry_delay = config.reconnect_seconds;
+        log_connection_attempt = true;
         ag_log(AG_LOG_WARNING, "Reconnecting in %u seconds", config.reconnect_seconds);
         sleep_interruptibly(config.reconnect_seconds);
     }
